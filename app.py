@@ -1,30 +1,58 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.linear_model import LinearRegression
-import os
 
-app = Flask(__name__, static_folder='static', static_url_path='')
-CORS(app)
+# Setup Page Configuration
+st.set_page_config(page_title="PredictDelivery AI", page_icon="🛵", layout="wide")
 
-# Global variables for model and training columns
-model = None
-training_columns = None
+# Custom CSS for better styling (matching our modern theme)
+st.markdown("""
+    <style>
+    .main {
+        background-color: #0f172a;
+        color: #f8fafc;
+    }
+    h1, h2, h3 {
+        color: #ff6b35 !important;
+    }
+    .stButton>button {
+        background-color: #ff6b35;
+        color: white;
+        font-weight: bold;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+    }
+    .stButton>button:hover {
+        background-color: #ff8559;
+        color: white;
+    }
+    .prediction-box {
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 20px;
+        border-radius: 15px;
+        text-align: center;
+        margin-top: 20px;
+    }
+    .prediction-time {
+        font-size: 48px;
+        font-weight: bold;
+        color: #ff6b35;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-def train_model():
-    """Loads data, preprocesses it, and trains the model upon startup."""
-    global model, training_columns
-    print("Training model...")
+
+@st.cache_resource
+def load_and_train_model():
+    """Loads dataset, preprocesses, and trains the model. Cached for performance."""
+    df = pd.read_csv("Food_Delivery_Times.csv")
     
-    csv_path = "Food_Delivery_Times.csv"
-    if not os.path.exists(csv_path):
-        print(f"Error: {csv_path} not found.")
-        return
-        
-    df = pd.read_csv(csv_path)
-    
-    # 1. Handle missing values (same as in delivery_prediction.py)
+    # Preprocessing
     num_cols = df.select_dtypes(include=['float64', 'int64']).columns
     for col in num_cols:
         df[col] = df[col].fillna(df[col].median())
@@ -33,82 +61,102 @@ def train_model():
     for col in cat_cols:
         df[col] = df[col].fillna(df[col].mode()[0])
         
-    # 2. One-hot encode
     df_encoded = pd.get_dummies(df, columns=cat_cols, drop_first=True)
     
-    # 3. Define X and y
     X = df_encoded.drop(['Order_ID', 'Delivery_Time_min'], axis=1)
     y = df_encoded['Delivery_Time_min']
     
-    # Save training columns for aligning incoming predict requests
-    training_columns = X.columns.tolist()
-    
-    # 4. Train model
     model = LinearRegression()
-    model.fit(X, y) # Training on full dataset for the app
-    print("Model trained successfully. Ready to serve predictions!")
-
-# Train model before the first request
-train_model()
-
-@app.route('/')
-def serve_index():
-    return send_from_directory('static', 'index.html')
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    if model is None or training_columns is None:
-        return jsonify({'error': 'Model is not trained yet. Check server logs.'}), 500
-        
-    data = request.json
+    model.fit(X, y)
     
-    try:
-        # Create a DataFrame from the input data
-        # Data should contain: Distance_km, Preparation_Time_min, Courier_Experience_yrs, Weather, Traffic_Level, Time_of_Day, Vehicle_Type
+    return model, X.columns.tolist(), df
+
+
+# Initialize model and data
+model, training_columns, raw_df = load_and_train_model()
+
+st.title("🛵 PredictDelivery AI")
+st.write("Smart, AI-powered food delivery time estimation based on real-time conditions.")
+
+# Create two columns for layout
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    st.subheader("Enter Order Details")
+    
+    distance = st.number_input("Distance (km)", min_value=0.0, value=5.2, step=0.1)
+    prep_time = st.number_input("Preparation Time (min)", min_value=0.0, value=15.0, step=1.0)
+    experience = st.number_input("Courier Experience (Years)", min_value=0.0, value=2.5, step=0.5)
+    
+    vehicle = st.selectbox("Vehicle Type", ["Scooter", "Bike", "Car"])
+    weather = st.selectbox("Weather", ["Clear", "Windy", "Foggy", "Rainy", "Snowy"])
+    traffic = st.selectbox("Traffic Level", ["Low", "Medium", "High"])
+    time_of_day = st.selectbox("Time of Day", ["Morning", "Afternoon", "Evening", "Night"])
+    
+    predict_clicked = st.button("Estimate Time")
+
+with col2:
+    if predict_clicked:
+        # Create input dictionary
         input_data = {
-            'Distance_km': [float(data.get('Distance_km', 0))],
-            'Preparation_Time_min': [float(data.get('Preparation_Time_min', 0))],
-            'Courier_Experience_yrs': [float(data.get('Courier_Experience_yrs', 0))],
-            'Weather': [data.get('Weather', 'Clear')],
-            'Traffic_Level': [data.get('Traffic_Level', 'Low')],
-            'Time_of_Day': [data.get('Time_of_Day', 'Afternoon')],
-            'Vehicle_Type': [data.get('Vehicle_Type', 'Scooter')]
+            'Distance_km': [distance],
+            'Preparation_Time_min': [prep_time],
+            'Courier_Experience_yrs': [experience],
+            'Weather': [weather],
+            'Traffic_Level': [traffic],
+            'Time_of_Day': [time_of_day],
+            'Vehicle_Type': [vehicle]
         }
         
         input_df = pd.DataFrame(input_data)
         
-        # We need to one-hot encode the input identically to the training data.
-        # So we create dummies, but we must ensure it has the exact same columns as the training set
+        # Ensure identical one-hot encoding
         cat_cols = ['Weather', 'Traffic_Level', 'Time_of_Day', 'Vehicle_Type']
-        input_encoded = pd.get_dummies(input_df, columns=cat_cols, drop_first=False)
+        input_encoded = pd.get_dummies(input_df, columns=cat_cols)
         
-        # Align with training columns (fill missing with 0)
-        # We start with a dataframe of zeros with the exact same shape as training columns
         aligned_df = pd.DataFrame(0, index=np.arange(1), columns=training_columns)
         
-        # For each column in input_encoded, if it exists in aligned_df, we set the value
         for col in input_encoded.columns:
             if col in aligned_df.columns:
-                # pandas get_dummies returns boolean, cast to int
-                val = input_encoded[col].iloc[0]
-                aligned_df.at[0, col] = int(val) if isinstance(val, (bool, np.bool_)) else val
+                aligned_df.at[0, col] = int(input_encoded[col].iloc[0])
                 
-            # Note: For drop_first=True, some categories are dropped (e.g. Weather_Clear). 
-            # If the user selects Weather=Clear, it simply means all other Weather dummy variables are 0.
-            # This is naturally handled because our aligned_df is initialized with 0s.
-        
-        # Make prediction
+        # Predict
         prediction = model.predict(aligned_df)
-        
-        # Ensure we don't predict negative time
         predicted_time = max(0, int(round(prediction[0])))
         
-        return jsonify({'predicted_time_min': predicted_time})
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 400
+        st.markdown(f"""
+            <div class="prediction-box">
+                <h2>Estimated Delivery Time</h2>
+                <div class="prediction-time">{predicted_time} <span style="font-size: 24px; color: #f8fafc;">Minutes</span></div>
+                <p style="color: #94a3b8;">Based on current conditions and historical data.</p>
+            </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+            <div class="prediction-box" style="opacity: 0.5;">
+                <h2>Estimated Delivery Time</h2>
+                <div class="prediction-time">-- <span style="font-size: 24px; color: #f8fafc;">Minutes</span></div>
+                <p style="color: #94a3b8;">Enter details and click Estimate Time</p>
+            </div>
+        """, unsafe_allow_html=True)
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+st.markdown("---")
+st.subheader("📊 Data Insights (For Viva)")
+
+with st.expander("View Exploratory Data Analysis (EDA)"):
+    st.write("These are the graphs generated from your dataset to understand the features.")
+    
+    st.write("**1. Distribution of Delivery Time**")
+    fig1, ax1 = plt.subplots(figsize=(8, 4))
+    sns.histplot(raw_df['Delivery_Time_min'], kde=True, color='blue', ax=ax1)
+    st.pyplot(fig1)
+    
+    st.write("**2. Delivery Time vs Traffic Level**")
+    fig2, ax2 = plt.subplots(figsize=(8, 4))
+    sns.boxplot(x='Traffic_Level', y='Delivery_Time_min', data=raw_df, ax=ax2)
+    st.pyplot(fig2)
+    
+    st.write("**3. Distance vs Delivery Time**")
+    fig3, ax3 = plt.subplots(figsize=(8, 4))
+    sns.scatterplot(x='Distance_km', y='Delivery_Time_min', data=raw_df, alpha=0.6, ax=ax3)
+    st.pyplot(fig3)
