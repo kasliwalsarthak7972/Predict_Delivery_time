@@ -140,23 +140,3 @@ with col2:
             </div>
         """, unsafe_allow_html=True)
 
-st.markdown("---")
-st.subheader("📊 Data Insights (For Viva)")
-
-with st.expander("View Exploratory Data Analysis (EDA)"):
-    st.write("These are the graphs generated from your dataset to understand the features.")
-    
-    st.write("**1. Distribution of Delivery Time**")
-    fig1, ax1 = plt.subplots(figsize=(8, 4))
-    sns.histplot(raw_df['Delivery_Time_min'], kde=True, color='blue', ax=ax1)
-    st.pyplot(fig1)
-    
-    st.write("**2. Delivery Time vs Traffic Level**")
-    fig2, ax2 = plt.subplots(figsize=(8, 4))
-    sns.boxplot(x='Traffic_Level', y='Delivery_Time_min', data=raw_df, ax=ax2)
-    st.pyplot(fig2)
-    
-    st.write("**3. Distance vs Delivery Time**")
-    fig3, ax3 = plt.subplots(figsize=(8, 4))
-    sns.scatterplot(x='Distance_km', y='Delivery_Time_min', data=raw_df, alpha=0.6, ax=ax3)
-    st.pyplot(fig3)
